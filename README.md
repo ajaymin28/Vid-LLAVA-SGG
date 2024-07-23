@@ -2,10 +2,11 @@
 
 
 # Change logs
-```
+
 V11
 [X] Added implementation for selected indices to pass to model for training and testing.
-[X] Select frames which covers more relations, this will help reducing the frames to 8
+[X] Select frames which covers more relations, this will help reducing the frames to 8 
+[ ] apply above changes to frame/image sg code.
 
 V10
 [X] updated frame selection logic same as video-llava code.
@@ -56,4 +57,3 @@ V4 Changes
 [X] Fix for multiple frames objects might appeare e.g adult.1_[0,10], adult.1_[30,60]
 [X] Taken avg frame for gettig bb for an object e.g adult.1_[0,10] => 5th frame will be taken to get BB
     -issue: sometimes in the average frame the object is occluded which results in no BB for the object.
-```
