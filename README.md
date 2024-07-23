@@ -4,9 +4,9 @@
 # Change logs
 
 V11:
-- [X] Added implementation for selected indices to pass to model for training and testing.
-- [X] Select frames which covers more relations, this will help reducing the frames to 8 
-- [ ] apply above changes to frame/image sg code.
+- :heavy_check_mark: Added implementation for selected indices to pass to model for training and testing.
+- :heavy_check_mark: Select frames which covers more relations, this will help reducing the frames to 8 
+- :white_check_mark: apply above changes to frame/image sg code.
 
 V10:
 - [X] updated frame selection logic same as video-llava code.
