@@ -7,69 +7,6 @@ import re
 import threading
 import time
 
-
-"""
-
-V11
-[X] Added implementation for selected indices to pass to model for training and testing.
-[]  Select frames which covers more relations, this will help reducing the frames to 8
-
-
-V10
-[X] updated frame selection logic same as video-llava code.
-
-V9 Changes
-[X] Only uni-index annotations should be taken for video
-[X] functions improvements for better reuse of code. (e.g conversation template)
-
-
-V8 Changes
-[X] for list of objects, added frame idx[0, 7] since video-llava takes 8 frames for the input video.
-    - This will help when the object is visible in the video from start to end as acts as a temporal entity
-    - object may be visible on all frames, but taken only first occurance when asked for a list of objects to avoid redundancy.
-[] for relation of objects, add nearest frame_idx from [0,7] and its respective bounding box
-    - here also multiple frames are possible from [0,7] but only the first occurance is taken. 
-[X] make vid sg annotation threaded
-
-
-V7 Changes
-[X] child,sitting on,chair ==> child:sitting on:chair for easy parsing the results
-[] Instead of average frame add frame start and end normlized
-    - Above will not solve the temporal prediction problem
-    - [X] Added frame wise annotations since Video-LLAVA takes only 8 frames from the video. This will be image-fine-tune dataset
-      - issue: large number of frames, takes a lot of time to train
-
-[X] - instead of taking all the frames from start to end taking only min max of annotations
-
-
-V6 Changes
-
-[x] Normlized Temporal frame value
-[x] bb values are rounded upto 3 decimal
-    - issue : predicting wrong frame (second frame can be added)
-
-V5 Changes
-
-[x] removed frame size in response.
-[x] removed frame from the objects list
-[x] removed Q&A pairs from pvsg dataset
-[x] removed summary from the pvsg dataset
-
-V4 Changes
-
-[X] Normlize BB
-[X] Seperate List of objects and Relationship between the objects (experimental) 
-    - [X] Reverting back to check the issues, results are not good (v5)
-[X] Keep same questions for all conversation
-[X] If BB is not found for any objects keep the list empty instead of passing zeros.
-[X] Removed list of categories before providing summary
-[X] Fix for multiple frames objects might appeare e.g adult.1_[0,10], adult.1_[30,60]
-[X] Taken avg frame for gettig bb for an object e.g adult.1_[0,10] => 5th frame will be taken to get BB
-    -issue: sometimes in the average frame the object is occluded which results in no BB for the object.
-
-
-"""
-
 prompts_list = {
     
     "summary": ["Describe the video in detail",
@@ -166,19 +103,11 @@ def getFramesForObject(vid_data, Subject_id):
     for idx, vid_r in enumerate(vid_rels):
         sub = vid_r[0]
         obj = vid_r[1]
-        rel = vid_r[2]
+        # rel = vid_r[2]
         frames_ = vid_r[3].copy()
         if Subject_id==sub or Subject_id==obj:
             return frames_
     return "None"
-
-
-def get_best_frame(uniform_sampled_frames, frame_start_end):
-  start, end = frame_start_end
-  midpoint = (start + end) // 2
-  # Find the nearest integer from the first list
-  nearest = min(uniform_sampled_frames, key=lambda x: abs(x - midpoint))
-  return nearest
    
 
 def get_frame_range_for_annotations(vid_objects, vid_data,):
@@ -216,6 +145,7 @@ def getListofCategoryString(vid_objects, vid_data, addObjectId=False, addFrames=
     
     AnswerString = ""
     frame_indices = []
+    total_frames = vid_data["meta"]["num_frames"]
     """V11 implementation
     [X] Select frames which covers all objects, avoid repetations
     """
@@ -224,6 +154,9 @@ def getListofCategoryString(vid_objects, vid_data, addObjectId=False, addFrames=
     min_frame_idx, max_frame_idx, frames_for_obj = get_frame_range_for_annotations(vid_objects, vid_data)
 
     for frame_idx  in range(min_frame_idx, max_frame_idx+1):
+      if frame_idx>total_frames:
+         continue
+
       if frame_idx not in frames_where_obj_is_present.keys():
         frames_where_obj_is_present[frame_idx] ={
           "objects_present": [],
@@ -280,6 +213,7 @@ def getListofCategoryString(vid_objects, vid_data, addObjectId=False, addFrames=
           if f_obj_idx!=len(frames_with_obj_cnt)-1:
             AnswerString +=","
 
+    # AnswerString +="END"
     return AnswerString, frame_indices
 
 def getConvBlock(value,conv_type="human", media_type="<image>", add_media_token=False):
@@ -320,13 +254,7 @@ def prepare_image_sg(chunk_vid_data_keys,data, norm_bb=True, dataset="vidor", un
     vid_rels = vid_data["relations"]
 
     total_frames = vid_data["meta"]["num_frames"]
-
-    # frame_idxs = [x for x in range(total_frames)]
-    # everynth = int(total_frames/uniform_sampling_idx)
-    # every8thIndex = frame_idxs[0::everynth+1]
     every8thIndex = np.linspace(0, total_frames-1, uniform_sampling_idx, dtype=int)
-
-    # print("every 8th index size ", len(every8thIndex))
 
     min_frame_idx, max_frame_idx = -1, 0
     for _, vid_r in enumerate(vid_rels):
@@ -539,8 +467,6 @@ def getObjectsRelations(vid_rels, vid_data, norm_frames=True, add_frames=True, u
     frame_indices = []
     # mask_size = None
 
-
-
     total_frames = vid_data["meta"]["num_frames"]
     # frame_idxs = [x for x in range(total_frames)]
     everynth = int(total_frames/uniform_sampling_idx)
@@ -556,6 +482,9 @@ def getObjectsRelations(vid_rels, vid_data, norm_frames=True, add_frames=True, u
     frames_where_subjobj_rel_is_present = {}
 
     for frame_idx in range(min_frame_idx, max_frame_idx+1):
+      if frame_idx>total_frames:
+         continue
+      
       if frame_idx not in frames_where_subjobj_rel_is_present.keys():
          frames_where_subjobj_rel_is_present[frame_idx] = {
             "subj_obj_rel": [],
@@ -588,6 +517,9 @@ def getObjectsRelations(vid_rels, vid_data, norm_frames=True, add_frames=True, u
     rel_added = []
     for f_obj_idx, f_obj_cnt in enumerate(frames_with_subjobj_rel_cnt):
       cnt_, f_idx = f_obj_cnt
+
+      if f_idx>total_frames:
+        continue
       
       data = frames_where_subjobj_rel_is_present[f_idx]
       subj_obj_rel = data["subj_obj_rel"]
@@ -615,6 +547,8 @@ def getObjectsRelations(vid_rels, vid_data, norm_frames=True, add_frames=True, u
 
           if idx!=len(subj_obj_rel)-1:
              AnswerString +=";"
+
+    # AnswerString +="END"
 
     frame_indices = list(set(frame_indices))
     return AnswerString, frame_indices
@@ -695,7 +629,8 @@ if __name__=="__main__":
 
     train_ids = anno["split"]['vidor']["train"]
     val_ids = anno["split"]['vidor']["val"]
-    data = {data_dict['video_id']: data_dict for data_dict in anno['data']}
+    vidor_ids = train_ids + val_ids
+    data = {data_dict['video_id']: data_dict for data_dict in anno['data'] if data_dict['video_id'] in vidor_ids}
     keys = list(data.keys())
     
     total_keys = len(keys)
@@ -729,15 +664,14 @@ if __name__=="__main__":
 
     print("Total videos ",len(keys))
 
-    pbar = tqdm(total=len(keys))
-    pbar.n = 0
-    pbar.last_print_n = 0
-    pbar.refresh()
-
-
     """
     Image Annotations
     """
+
+    # pbar = tqdm(total=len(keys))
+    # pbar.n = 0
+    # pbar.last_print_n = 0
+    # pbar.refresh()
 
     # for ch_idx, chunk_vid_data in enumerate(chunked_list):
     #   T = threading.Thread(target=prepare_image_sg, name=f"Thread{ch_idx+1}", args=(chunk_vid_data,data,True,"vidor"))
