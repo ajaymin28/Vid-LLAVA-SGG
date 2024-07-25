@@ -8,7 +8,7 @@ V12:
 - Frame wise response [0-7]. 
     - :black_square_button: list objects per frame {0: obj1,obj2, 1: obj1,obj3}
     - :black_square_button: list triplets per frame {0: <subj,pred,obj>, 1: <subj,pred,obj>}
-    - :black_square_button: seperate instruictions for bounding box "provide location for obj1"
+    - :black_square_button: seperate instructions for bounding box "provide location for obj1"
 - :black_square_button: apply V11 changes to frame/image sg code.
 
 V11:
