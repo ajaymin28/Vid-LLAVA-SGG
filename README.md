@@ -3,10 +3,17 @@
 
 # Change logs
 
+
+V12:
+- Frame wise response [0-7]. 
+    - :black_square_button: list objects per frame {0: obj1,obj2, 1: obj1,obj3}
+    - :black_square_button: list triplets per frame {0: <subj,pred,obj>, 1: <subj,pred,obj>}
+    - :black_square_button: seperate instruictions for bounding box "provide location for obj1"
+- :black_square_button: apply V11 changes to frame/image sg code.
+
 V11:
 - :white_check_mark: Added implementation for selected indices to pass to model for training and testing.
 - :white_check_mark: Select frames which covers more relations, this will help reducing the frames to 8 
-- :black_square_button: apply above changes to frame/image sg code.
 
 V10:
 - :white_check_mark: updated frame selection logic same as video-llava code.
