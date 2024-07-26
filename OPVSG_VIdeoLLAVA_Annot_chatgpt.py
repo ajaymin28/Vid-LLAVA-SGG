@@ -33,7 +33,14 @@ prompts_list = {
                             "Describe any notable physical interactions between objects in the video.",
                             "Describe any interactions that highlight the relationships between objects.",
                             "What actions or events take place in the video?",
-                          ]
+                          ],
+    "SGG": [
+       "Generate frame-by-frame scene graph for the provided video",
+       "Provide frame-by-frame Scene graph triplets in the form of [Subject:Predicate:Object]",
+       "Generate scene graph for the provided video",
+       "Provide scene graph for the provided video",
+       "Identify subjects, predicates and objects frame-by-frame in the provided video"
+    ]
 }
 
 
@@ -178,42 +185,190 @@ def getListofCategoryString(vid_objects, vid_data, addObjectId=False, addFrames=
           frames_where_obj_is_present[frame_idx]["object_bb"].append(sub_bb)
           frames_where_obj_is_present[frame_idx]["object_cnt"] +=1
 
+    # Take frames with more objects count first
     frames_with_obj_cnt = [(frames_where_obj_is_present[f_idx]["object_cnt"], f_idx) for f_idx in frames_where_obj_is_present]
     frames_with_obj_cnt = sorted(frames_with_obj_cnt,reverse=True)
 
     objects_added = []
+
+    """
+    Frame wise
+    AnswerString = {
+      0: "floor-1, wall-1, pillow-4",
+      1: "floor-1, wall-1, shelf-4"
+      .
+      .
+      7: "obj1,obj2"
+    }
+    """
+
+    AnswerString += "{"
+
     for f_obj_idx, f_obj_cnt in enumerate(frames_with_obj_cnt):
       cnt_,f_idx = f_obj_cnt
       data = frames_where_obj_is_present[f_idx]
 
+      AnswerString += f"{f_obj_idx}:"
+      AnswerString +="'"  # start the list of objects string by "'"
+
       objects_present = data["objects_present"]
       objects_bb = data["object_bb"]
+
+      frame_indices.append(f_idx) # use frame indices where object annotations are present
 
       for oidx, obj in enumerate(objects_present):
         category = obj["category"]
         object_id = obj["object_id"]
 
-        object_name_id = f"{category}-{object_id}"
+        # object_name_id = f"{category}-{object_id}"
+        # if object_name_id not in objects_added:
+        #   """This ensures unique objects in the list"""
+        #   objects_added.append(object_name_id)
 
-        if object_name_id not in objects_added:
-          """This ensures unique objects in the list"""
-          objects_added.append(object_name_id)
+        AnswerString += f"{category}"
 
-          AnswerString += f"{category}"
+        if addObjectId:
+          AnswerString += f"-{object_id}"
 
-          if addObjectId:
-            AnswerString += f"-{object_id}"
-          if addBB:
-            AnswerString += f"-{objects_bb[oidx]}"
-          if addFrames:
-            AnswerString += f"_[{f_idx}]"
+        if addBB:
+          AnswerString += f"-{objects_bb[oidx]}"
+        if addFrames:
+          AnswerString += f"_[{f_idx}]"
 
-          frame_indices.append(f_idx) # use frame indices where object annotations are present
+        if oidx!=len(objects_present)-1:
+          AnswerString +=","
+        else:
+          AnswerString +="'"  # finish the list of objects string by "'"
+        
+        if f_obj_idx>6:
+           # TODO: some objects which appears in low count, will not be taken due to object density
+           # In order to resolve this issue, need to accomodate all frames in 8 frames
+           break
+        
+        if f_obj_idx!=len(frames_with_obj_cnt)-1:
+           AnswerString += f"," # end of current key in dict
 
-          if f_obj_idx!=len(frames_with_obj_cnt)-1:
-            AnswerString +=","
 
-    # AnswerString +="END"
+    AnswerString += "}"
+
+    return AnswerString, frame_indices
+
+def getObjectsRelations(vid_rels, vid_data, norm_frames=True, add_frames=True, uniform_sampling_idx=8):
+    """
+    uniform_sampling_idx=8 for Video-LLAVA
+
+    1. Video-LLAVA uses uniform sampling of every nth Frame and it defaults to 8th.
+    2. Taking every 8th frame only here for taking annotations rather than random sampling or all, 
+    this will help better bounding box predition and frame predition where event is happening.
+    """
+    AnswerString = ""
+    SubObjRel = []
+    frame_indices = []
+    # mask_size = None
+
+    total_frames = vid_data["meta"]["num_frames"]
+    # frame_idxs = [x for x in range(total_frames)]
+    everynth = int(total_frames/uniform_sampling_idx)
+    # every8thIndex = frame_idxs[0::everynth+1] 
+    every8thIndex = np.linspace(0, total_frames-1, uniform_sampling_idx, dtype=int)
+
+    vid_objects = vid_data["objects"] # {'object_id': 2, 'category': 'countertop', 'is_thing': True, 'status': []},
+    vid_objects_by_id = {data_dict['object_id']: data_dict for data_dict in vid_objects} # for relations
+    vid_rels = vid_data["relations"]
+    vid_id = vid_data["video_id"]
+
+    min_frame_idx, max_frame_idx, frames_for_obj = get_frame_range_for_annotations(vid_objects, vid_data) # drop frames with no annotations
+    frames_where_subjobj_rel_is_present = {}
+
+    for frame_idx in range(min_frame_idx, max_frame_idx+1):
+      if frame_idx>total_frames:
+         continue
+      
+      if frame_idx not in frames_where_subjobj_rel_is_present.keys():
+         frames_where_subjobj_rel_is_present[frame_idx] = {
+            "subj_obj_rel": [],
+            "subj_obj_bb": [],
+            "annot_cnt": 0
+         }
+
+      for idx, vid_r in enumerate(vid_rels):
+        sub = vid_r[0]
+        obj = vid_r[1]
+        rel = vid_r[2]
+        frames = vid_r[3].copy()
+        frame_start, frame_end = frames[0][0], frames[0][1]
+
+        if frame_start>=frame_idx and frame_idx<=frame_end:
+          sub_bb, obj_bb, mask_size = get_bb_subj_obj(data_root=data_root,vid_id=vid_id,frame_idx=frame_idx,subject_id=sub,object_id=obj)
+
+          if sum(sub_bb)>=0 and sum(obj_bb)>=0:
+            # selected_frame = frame_for_bb_idx
+            # break
+            frames_where_subjobj_rel_is_present[frame_idx]["subj_obj_rel"].append(vid_r)
+            frames_where_subjobj_rel_is_present[frame_idx]["subj_obj_bb"].append([sub_bb, obj_bb])
+            frames_where_subjobj_rel_is_present[frame_idx]["annot_cnt"] +=1
+
+
+    frames_with_subjobj_rel_cnt = [(frames_where_subjobj_rel_is_present[f_idx]["annot_cnt"], f_idx) for f_idx in frames_where_subjobj_rel_is_present]
+    frames_with_subjobj_rel_cnt = sorted(frames_with_subjobj_rel_cnt,reverse=True) # get frames with highest rels annotation first
+
+
+    AnswerString += "{"
+
+    for f_obj_idx, f_obj_cnt in enumerate(frames_with_subjobj_rel_cnt):
+      cnt_, f_idx = f_obj_cnt
+
+      if f_idx>total_frames:
+        continue
+
+
+      rel_added = []
+
+      data = frames_where_subjobj_rel_is_present[f_idx]
+      subj_obj_rel = data["subj_obj_rel"]
+      subj_obj_bb = data["subj_obj_bb"]
+
+      AnswerString += f"'Frame {f_obj_idx}':"
+      AnswerString +="'"  # start the list of relations string by "'"
+
+      frame_indices.append(f_idx)
+
+      for idx, vid_r in enumerate(subj_obj_rel):
+        sub = vid_r[0]
+        obj = vid_r[1]
+        rel = vid_r[2]
+        frames = vid_r[3].copy()
+        sub_bb, obj_bb = subj_obj_bb[idx]
+
+        
+        #   """This ensures unique subject object relation in the list"""
+        #   rel_added.append(subj_obj_rel_entity)
+        #   frame_indices.append(f_idx)
+        #   if not add_frames:
+        #     AnswerString += f"[{vid_objects_by_id[sub]['category']}-{sub}-{sub_bb}:{rel}:{vid_objects_by_id[obj]['category']}-{obj}-{obj_bb}]" 
+        #   else:
+        #     AnswerString += f"[{vid_objects_by_id[sub]['category']}-{sub}-{sub_bb}:{rel}:{vid_objects_by_id[obj]['category']}-{obj}-{obj_bb}_[{f_idx}]]"
+        subj_obj_rel_entity = f"{sub}-{rel}-{obj}"
+        if subj_obj_rel_entity not in rel_added:
+          rel_added.append(subj_obj_rel_entity)
+          AnswerString += f"[{vid_objects_by_id[sub]['category']}:{rel}:{vid_objects_by_id[obj]['category']}]"
+        if idx!=len(subj_obj_rel)-1:
+          AnswerString +=";"
+        else:
+          AnswerString +="'"  # finish the list of triplets string by "'"
+
+      
+      if f_obj_idx>6:
+           # TODO: some predicates which appears in low count, will not be taken due to object density
+           # In order to resolve this issue, need to accomodate all frames in 8 frames
+           break
+      
+      if f_obj_idx!=len(frames_with_subjobj_rel_cnt)-1:
+        AnswerString +=","
+
+    
+    AnswerString +="}"
+
     return AnswerString, frame_indices
 
 def getConvBlock(value,conv_type="human", media_type="<image>", add_media_token=False):
@@ -392,18 +547,17 @@ def prepare_vid_sg_threaded(chunk_vid_data_keys,data, norm_bb=True, dataset="vid
 
       PromptAnswer = getPromptTemplate(media_path=video_path, media_type="video")
 
-      convQ = getConvBlock(value=getRandomPrompt(key='identify_subject_objects', static=True), 
-                          conv_type="human", media_type="<video>", 
-                          add_media_token=True)
-      AnswerStringObjs, frame_indices_obj = getListofCategoryString(vid_objects, vid_data, addObjectId=True,addBB=True,addFrames=False)
-      convA = getConvBlock(value=AnswerStringObjs, 
-                          conv_type="gpt", media_type="<image>", 
-                          add_media_token=False)
-      
-      PromptAnswer["conversations"].append(convQ)
-      PromptAnswer["conversations"].append(convA)
+      # convQ = getConvBlock(value=getRandomPrompt(key='identify_subject_objects', static=True), 
+      #                     conv_type="human", media_type="<video>", 
+      #                     add_media_token=True)
+      # AnswerStringObjs, frame_indices_obj = getListofCategoryString(vid_objects, vid_data, addObjectId=True,addBB=False,addFrames=False)
+      # convA = getConvBlock(value=AnswerStringObjs, 
+      #                     conv_type="gpt", media_type="<image>", 
+      #                     add_media_token=False)
+      # PromptAnswer["conversations"].append(convQ)
+      # PromptAnswer["conversations"].append(convA)
 
-      convQ = getConvBlock(value=getRandomPrompt(key='identify_predicates', static=True), 
+      convQ = getConvBlock(value=getRandomPrompt(key='SGG', static=False), 
                           conv_type="human", media_type="<image>", 
                           add_media_token=False)
       AnswerStringRels, frame_indices_rel = getObjectsRelations(vid_data["relations"], vid_data, uniform_sampling_idx=uniform_sampling_idx, add_frames=False)
@@ -414,7 +568,9 @@ def prepare_vid_sg_threaded(chunk_vid_data_keys,data, norm_bb=True, dataset="vid
       PromptAnswer["conversations"].append(convQ)
       PromptAnswer["conversations"].append(convA)
 
-      all_frame_indices = list(set(frame_indices_rel + frame_indices_obj))
+      # all_frame_indices = list(set(frame_indices_rel + frame_indices_obj))
+
+      all_frame_indices = list(set(frame_indices_rel))
       PromptAnswer["frame_indices"] =  sorted(all_frame_indices)
       PromptAnswer["total_frames"] = total_frames
 
@@ -452,106 +608,6 @@ def get_bb_subj_obj(data_root,vid_id,frame_idx,subject_id,object_id):
     pass
 
   return sub_bb, obj_bb, mask_size
-
-
-def getObjectsRelations(vid_rels, vid_data, norm_frames=True, add_frames=True, uniform_sampling_idx=8):
-    """
-    uniform_sampling_idx=8 for Video-LLAVA
-
-    1. Video-LLAVA uses uniform sampling of every nth Frame and it defaults to 8th.
-    2. Taking every 8th frame only here for taking annotations rather than random sampling or all, 
-    this will help better bounding box predition and frame predition where event is happening.
-    """
-    AnswerString = ""
-    SubObjRel = []
-    frame_indices = []
-    # mask_size = None
-
-    total_frames = vid_data["meta"]["num_frames"]
-    # frame_idxs = [x for x in range(total_frames)]
-    everynth = int(total_frames/uniform_sampling_idx)
-    # every8thIndex = frame_idxs[0::everynth+1] 
-    every8thIndex = np.linspace(0, total_frames-1, uniform_sampling_idx, dtype=int)
-
-    vid_objects = vid_data["objects"] # {'object_id': 2, 'category': 'countertop', 'is_thing': True, 'status': []},
-    vid_objects_by_id = {data_dict['object_id']: data_dict for data_dict in vid_objects} # for relations
-    vid_rels = vid_data["relations"]
-    vid_id = vid_data["video_id"]
-
-    min_frame_idx, max_frame_idx, frames_for_obj = get_frame_range_for_annotations(vid_objects, vid_data) # drop frames with no annotations
-    frames_where_subjobj_rel_is_present = {}
-
-    for frame_idx in range(min_frame_idx, max_frame_idx+1):
-      if frame_idx>total_frames:
-         continue
-      
-      if frame_idx not in frames_where_subjobj_rel_is_present.keys():
-         frames_where_subjobj_rel_is_present[frame_idx] = {
-            "subj_obj_rel": [],
-            "subj_obj_bb": [],
-            "annot_cnt": 0
-         }
-
-      for idx, vid_r in enumerate(vid_rels):
-        sub = vid_r[0]
-        obj = vid_r[1]
-        rel = vid_r[2]
-        frames = vid_r[3].copy()
-        frame_start, frame_end = frames[0][0], frames[0][1]
-
-        if frame_start>=frame_idx and frame_idx<=frame_end:
-          sub_bb, obj_bb, mask_size = get_bb_subj_obj(data_root=data_root,vid_id=vid_id,frame_idx=frame_idx,subject_id=sub,object_id=obj)
-
-          if sum(sub_bb)>=0 and sum(obj_bb)>=0:
-            # selected_frame = frame_for_bb_idx
-            # break
-            frames_where_subjobj_rel_is_present[frame_idx]["subj_obj_rel"].append(vid_r)
-            frames_where_subjobj_rel_is_present[frame_idx]["subj_obj_bb"].append([sub_bb, obj_bb])
-            frames_where_subjobj_rel_is_present[frame_idx]["annot_cnt"] +=1
-
-
-    frames_with_subjobj_rel_cnt = [(frames_where_subjobj_rel_is_present[f_idx]["annot_cnt"], f_idx) for f_idx in frames_where_subjobj_rel_is_present]
-    frames_with_subjobj_rel_cnt = sorted(frames_with_subjobj_rel_cnt,reverse=True) # get frames with highest rels annotation first
-
-
-    rel_added = []
-    for f_obj_idx, f_obj_cnt in enumerate(frames_with_subjobj_rel_cnt):
-      cnt_, f_idx = f_obj_cnt
-
-      if f_idx>total_frames:
-        continue
-      
-      data = frames_where_subjobj_rel_is_present[f_idx]
-      subj_obj_rel = data["subj_obj_rel"]
-      subj_obj_bb = data["subj_obj_bb"]
-
-      for idx, vid_r in enumerate(subj_obj_rel):
-        sub = vid_r[0]
-        obj = vid_r[1]
-        rel = vid_r[2]
-        frames = vid_r[3].copy()
-        sub_bb, obj_bb = subj_obj_bb[idx]
-
-
-        subj_obj_rel_entity = f"{sub}-{rel}-{obj}"
-        if subj_obj_rel_entity not in rel_added:
-          """This ensures unique subject object relation in the list"""
-          rel_added.append(subj_obj_rel_entity)
-          frame_indices.append(f_idx)
-
-          if not add_frames:
-            AnswerString += f"[{vid_objects_by_id[sub]['category']}-{sub}-{sub_bb}:{rel}:{vid_objects_by_id[obj]['category']}-{obj}-{obj_bb}]" 
-          else:
-            AnswerString += f"[{vid_objects_by_id[sub]['category']}-{sub}-{sub_bb}:{rel}:{vid_objects_by_id[obj]['category']}-{obj}-{obj_bb}_[{f_idx}]]"
-
-
-          if idx!=len(subj_obj_rel)-1:
-             AnswerString +=";"
-
-    # AnswerString +="END"
-
-    frame_indices = list(set(frame_indices))
-    return AnswerString, frame_indices
 
 
 def getVideoCaptions(vid_data, correct_object_ids=False):
@@ -647,7 +703,7 @@ if __name__=="__main__":
     print("len of chunked list: ", len(chunked_list))
 
 
-    OUTPUT_JSON_DIR = "/lustre/fs1/home/jbhol/dso/gits/OpenPVSG/data/video_llava_annotations_v11/"
+    OUTPUT_JSON_DIR = "/lustre/fs1/home/jbhol/dso/gits/OpenPVSG/data/video_llava_annotations_v12/"
     JSON_llava_image_tune_validate = f"{OUTPUT_JSON_DIR}/llava_image_tune_validate.json"
     JSON_llava_image_tune = f"{OUTPUT_JSON_DIR}/llava_image_tune_.json"
     JSON_videochatgpt_tune = f"{OUTPUT_JSON_DIR}/videochatgpt_tune_.json"
