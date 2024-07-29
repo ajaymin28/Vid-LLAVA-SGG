@@ -84,10 +84,10 @@ def getboundingBoxOftheObject(data_root, vid_id, frame_id, object_id, normlize_b
         y_max = int(np.max(segmentation[0]))
 
         if normlize_bb:
-           x_min = round(x_min/mask_w,3)
-           x_max = round(x_max/mask_w,3)
-           y_min = round(y_min/mask_h,3)
-           y_max = round(y_max/mask_h,3)
+           x_min = round(x_min/mask_w,2)
+           x_max = round(x_max/mask_w,2)
+           y_min = round(y_min/mask_h,2)
+           y_max = round(y_max/mask_h,2)
 
         bbox = [x_min, y_min, x_max, y_max]
         # print(bbox)
@@ -403,9 +403,16 @@ def addObjectsRelations_bb_instructions(video_path,vid_data,total_frames, subjob
     subj_obj_rel = data["subj_obj_rel"]
     subj_obj_bb = data["subj_obj_bb"]
 
-    
 
     add_video_token= True
+
+    # obj_counter = {}
+    # def update_obj_cnt(obj_name,obj_counter):
+    #   if obj_name not in obj_counter:
+    #     obj_counter[obj_name] = 0
+    #   else:
+    #     obj_counter[obj_name] += 1
+    #   return obj_counter
 
     for rel_idx, relation in enumerate(subj_obj_rel):
       sub = relation[0]
@@ -425,15 +432,24 @@ def addObjectsRelations_bb_instructions(video_path,vid_data,total_frames, subjob
       # if add_video_token:
       #    add_video_token = False
 
-      
+      obj_cnt = obj
+      sub_cnt = sub
+
       # "Provide bounding box location of [{sub}:{rel}:{obj}] in frame {frame_idx} of the provided video" # {} to be replaced by actual value
-      convQ["value"] = convQ["value"].replace("{sub}", vid_objects_by_id[sub]['category'])
+      convQ["value"] = convQ["value"].replace("{sub}", f"{vid_objects_by_id[sub]['category']}-{sub_cnt}")
       convQ["value"] = convQ["value"].replace("{rel}", rel)
-      convQ["value"] = convQ["value"].replace("{obj}", vid_objects_by_id[obj]['category'])
+      convQ["value"] = convQ["value"].replace("{obj}", f"{vid_objects_by_id[obj]['category']}-{obj_cnt}")
       convQ["value"] = convQ["value"].replace("{frame_idx}", str(frame_indices.index(frame_idx)))
 
 
-      AnswerString_rel_bb = f"""The bounding box locations of <{vid_objects_by_id[sub]['category']},{rel},{vid_objects_by_id[obj]['category']}> in frame {frame_list_idx} is, {subj_obj_bb[rel_idx]}"""
+      AnswerString_rel_bb = f"""The bounding box location is """
+      AnswerString_rel_bb += f"""{vid_objects_by_id[sub]['category']}-{sub_cnt}-{subj_obj_bb[rel_idx][0]}:{rel}:"""
+      AnswerString_rel_bb += f"""{vid_objects_by_id[obj]['category']}-{obj_cnt}-{subj_obj_bb[rel_idx][1]}"""
+
+      # AnswerString_rel_bb = f"""The bounding box locations of"""
+      # AnswerString_rel_bb += f"""[{vid_objects_by_id[sub]['category']}:{rel}:{vid_objects_by_id[obj]['category']}]"""
+      # AnswerString_rel_bb += f"""in frame {frame_list_idx} is, {subj_obj_bb[rel_idx][0], subj_obj_bb[rel_idx][1]}"""
+
       convA = getConvBlock(value=AnswerString_rel_bb, 
                         conv_type="gpt", media_type="<video>", 
                         add_media_token=False)
@@ -490,7 +506,8 @@ def getObjectsRelations(vid_rels, vid_data, norm_frames=True, add_frames=True, u
         frames = vid_r[3].copy()
         frame_start, frame_end = frames[0][0], frames[0][1]
 
-        if frame_start>=frame_idx and frame_idx<=frame_end:
+        # if frame_start>=frame_idx and frame_idx<=frame_end: # FIXED CONDITION
+        if frame_idx>=frame_start and frame_idx<=frame_end:
           sub_bb, obj_bb, mask_size = get_bb_subj_obj(data_root=data_root,vid_id=vid_id,frame_idx=frame_idx,subject_id=sub,object_id=obj)
 
           if sum(sub_bb)>=0 and sum(obj_bb)>=0:
@@ -525,6 +542,14 @@ def getObjectsRelations(vid_rels, vid_data, norm_frames=True, add_frames=True, u
 
       frame_indices.append(f_idx)
 
+      # obj_counter = {}
+      # def update_obj_cnt(obj_name,obj_counter):
+      #   if obj_name not in obj_counter:
+      #     obj_counter[obj_name] = 0
+      #   else:
+      #     obj_counter[obj_name] += 1
+      #   return obj_counter
+
       for idx, vid_r in enumerate(subj_obj_rel):
         sub = vid_r[0]
         obj = vid_r[1]
@@ -532,7 +557,6 @@ def getObjectsRelations(vid_rels, vid_data, norm_frames=True, add_frames=True, u
         frames = vid_r[3].copy()
         sub_bb, obj_bb = subj_obj_bb[idx]
 
-        
         #   """This ensures unique subject object relation in the list"""
         #   rel_added.append(subj_obj_rel_entity)
         #   frame_indices.append(f_idx)
@@ -540,10 +564,18 @@ def getObjectsRelations(vid_rels, vid_data, norm_frames=True, add_frames=True, u
         #     AnswerString += f"[{vid_objects_by_id[sub]['category']}-{sub}-{sub_bb}:{rel}:{vid_objects_by_id[obj]['category']}-{obj}-{obj_bb}]" 
         #   else:
         #     AnswerString += f"[{vid_objects_by_id[sub]['category']}-{sub}-{sub_bb}:{rel}:{vid_objects_by_id[obj]['category']}-{obj}-{obj_bb}_[{f_idx}]]"
-        subj_obj_rel_entity = f"{sub}-{rel}-{obj}"
+        
+        # obj_counter = update_obj_cnt(vid_objects_by_id[sub]['category'],obj_counter)  # adult-0, adult-1, atult-3 and so on.
+        # obj_counter = update_obj_cnt(vid_objects_by_id[obj]['category'],obj_counter)
+        # cnt_of_sub = obj_counter[vid_objects_by_id[sub]['category']]
+        # cnt_of_obj = obj_counter[vid_objects_by_id[obj]['category']]
+        cnt_of_sub = obj
+        cnt_of_obj = sub
+        
+        subj_obj_rel_entity = f"{sub}{cnt_of_sub}-{rel}-{obj}{cnt_of_obj}"
         if subj_obj_rel_entity not in rel_added:
           rel_added.append(subj_obj_rel_entity)
-          AnswerString += f"[{vid_objects_by_id[sub]['category']}:{rel}:{vid_objects_by_id[obj]['category']}]"
+          AnswerString += f"[{vid_objects_by_id[sub]['category']}-{cnt_of_sub}:{rel}:{vid_objects_by_id[obj]['category']}-{cnt_of_obj}]"
         if idx!=len(subj_obj_rel)-1:
           AnswerString +=";"
         else:
@@ -591,6 +623,7 @@ def prepare_vid_sg_threaded(chunk_vid_data_keys,data, norm_bb=True, dataset="vid
    
 
    global video_gpt_promptanswers, video_gpt_promptanswers_val, annot_cnt
+   global video_gpt_bb_promptanswers, video_gpt_bb_promptanswers_val, video_bb_annot_cnt
 
    for vid_id in chunk_vid_data_keys:
       vid_data = data[vid_id]
@@ -651,13 +684,13 @@ def prepare_vid_sg_threaded(chunk_vid_data_keys,data, norm_bb=True, dataset="vid
       with lock:
         for obj_rel_bb_prmpt in obj_rel_bb_prompts:
           if vid_id in train_ids:
-            obj_rel_bb_prmpt["id"] = annot_cnt["train"]
-            video_gpt_promptanswers.append(obj_rel_bb_prmpt)
-            annot_cnt["train"] +=1
+            obj_rel_bb_prmpt["id"] = video_bb_annot_cnt["train"]
+            video_gpt_bb_promptanswers.append(obj_rel_bb_prmpt)
+            video_bb_annot_cnt["train"] +=1
           else:
-            obj_rel_bb_prmpt["id"] = annot_cnt["val"]
-            video_gpt_promptanswers_val.append(obj_rel_bb_prmpt)
-            annot_cnt["val"] +=1
+            obj_rel_bb_prmpt["id"] = video_bb_annot_cnt["val"]
+            video_gpt_bb_promptanswers_val.append(obj_rel_bb_prmpt)
+            video_bb_annot_cnt["val"] +=1
          
       with lock:
         pbar.n +=1
@@ -777,20 +810,26 @@ if __name__=="__main__":
     print("len of chunked list: ", len(chunked_list))
 
 
-    OUTPUT_JSON_DIR = "/lustre/fs1/home/jbhol/dso/gits/OpenPVSG/data/video_llava_annotations_v12_1/"
+    OUTPUT_JSON_DIR = "/lustre/fs1/home/jbhol/dso/gits/OpenPVSG/data/video_llava_annotations_v13/"
     JSON_llava_image_tune_validate = f"{OUTPUT_JSON_DIR}/llava_image_tune_validate.json"
     JSON_llava_image_tune = f"{OUTPUT_JSON_DIR}/llava_image_tune_.json"
     JSON_videochatgpt_tune = f"{OUTPUT_JSON_DIR}/videochatgpt_tune_.json"
     JSON_videochatgpt_tune_validate = f"{OUTPUT_JSON_DIR}/videochatgpt_tune_validate.json"
+    JSON_videochatgpt_bb_tune = f"{OUTPUT_JSON_DIR}/videochatgpt_tune_bb.json"
+    JSON_videochatgpt_bb_tune_validate = f"{OUTPUT_JSON_DIR}/videochatgpt_tune_bb_validate.json"
     os.makedirs(OUTPUT_JSON_DIR, exist_ok=True)
 
     video_gpt_promptanswers = []
     video_gpt_promptanswers_val = []
 
+    video_gpt_bb_promptanswers=  []
+    video_gpt_bb_promptanswers_val =  []
+
     llava_image_tune = []
     llava_image_tune_val = []
     image_annot_cnt = {"train": 0, "val": 0}
     annot_cnt = {"train": 0, "val": 0}
+    video_bb_annot_cnt = {"train": 0, "val": 0}
 
     print("Total videos ",len(keys))
 
@@ -841,3 +880,12 @@ if __name__=="__main__":
     with open(JSON_videochatgpt_tune_validate, "w") as f:
         json.dump(video_gpt_promptanswers_val,f)
     print("Saved annotations", annot_cnt)
+
+    with open(JSON_videochatgpt_bb_tune, "w") as f:
+        json.dump(video_gpt_bb_promptanswers,f)
+    with open(JSON_videochatgpt_bb_tune_validate, "w") as f:
+        json.dump(video_gpt_bb_promptanswers_val,f)
+    print("Saved annotations", video_bb_annot_cnt)
+
+
+    

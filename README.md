@@ -8,6 +8,8 @@ V13
 - Stepwise training (triplets finetuning and location overfits and increases loss after some epochs)
     - :black_square_button: Step 1: triplets finetuning
     - :black_square_button: Step 2: triplets localization finetuning (use step 1 as base model)
+    - :white_check_mark: Fixed if condition for frame level SG
+    - :white_check_mark: issue[Fixed]: Incremental counters for objects creates issues in predictions for objects
 
 V12.1:
 - Frame wise response [0-7]. 
