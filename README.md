@@ -3,8 +3,13 @@
 
 # Change logs
 
+V13
 
-V12:
+- Stepwise training (triplets finetuning and location overfits and increases loss after some epochs)
+    - :black_square_button: Step 1: triplets finetuning
+    - :black_square_button: Step 2: triplets localization finetuning (use step 1 as base model)
+
+V12.1:
 - Frame wise response [0-7]. 
     - :white_check_mark: list objects per frame {0: obj1,obj2, 1: obj1,obj3}
     - :white_check_mark: list triplets per frame {0: [subj:pred:obj], 1: [subj:pred:obj]}
