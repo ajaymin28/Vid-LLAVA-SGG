@@ -3,6 +3,12 @@
 
 # Change logs
 
+
+V14
+
+- Add bounding boxes after the triplete and not the object
+
+
 V13
 
 - Stepwise training (triplets finetuning and location overfits and increases loss after some epochs)

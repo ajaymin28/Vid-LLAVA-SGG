@@ -36,10 +36,18 @@ prompts_list = {
                           ],
     "SGG": [
        "Generate frame-by-frame scene graph for the provided video",
-       "Provide frame-by-frame Scene graph triplets in the form of [Subject:Predicate:Object]",
+       "Provide frame-by-frame Scene graph triplets in the form of [Subject-id:Predicate:Object-id]",
        "Generate scene graph for the provided video",
        "Provide scene graph for the provided video",
        "Identify subjects, predicates and objects frame-by-frame in the provided video"
+    ],
+
+    "SGG_with_bb": [
+       "Generate frame-by-frame scene graph for the provided video along with bounding box of each objects",
+       "Provide frame-by-frame Scene graph triplets in the form of [Subject-id-[min_x,min_y,max_x,max_y]:Predicate:Object-id-[min_x,min_y,max_x,max_y]]",
+       "Generate scene graph for the provided video along with bounding box of each objects",
+       "Provide scene graph for the provided video with bounding box location of each objects",
+       "Identify Subjects, Predicates and Objects frame-by-frame in the provided video, also provide bounding box location of each subject and object"
     ],
 
     "sg_localization": [
@@ -396,13 +404,13 @@ def addObjectsRelations_bb_instructions(video_path,vid_data,total_frames, subjob
   obj_rel_bb_prompts = []
   vid_objects = vid_data["objects"] # {'object_id': 2, 'category': 'countertop', 'is_thing': True, 'status': []},
   vid_objects_by_id = {data_dict['object_id']: data_dict for data_dict in vid_objects} # for relations
+
   #  vid_rels = vid_data["relations"]
   #  vid_id = vid_data["video_id"]
   for frame_list_idx, frame_idx in enumerate(frame_indices):
     data = subjobj_rel_frames_data[frame_idx]
     subj_obj_rel = data["subj_obj_rel"]
     subj_obj_bb = data["subj_obj_bb"]
-
 
     add_video_token= True
 
@@ -414,6 +422,8 @@ def addObjectsRelations_bb_instructions(video_path,vid_data,total_frames, subjob
     #     obj_counter[obj_name] += 1
     #   return obj_counter
 
+    PromptAnswer = getPromptTemplate(media_path=video_path, media_type="video")
+
     for rel_idx, relation in enumerate(subj_obj_rel):
       sub = relation[0]
       obj = relation[1]
@@ -424,27 +434,22 @@ def addObjectsRelations_bb_instructions(video_path,vid_data,total_frames, subjob
       if sum(sub_bb)==0 or sum(obj_bb)==0:
          continue
 
-      PromptAnswer = getPromptTemplate(media_path=video_path, media_type="video")
 
       convQ = getConvBlock(value=getRandomPrompt(key='sg_localization', static=True), 
                             conv_type="human", media_type="<video>", 
                             add_media_token=add_video_token)
-      # if add_video_token:
-      #    add_video_token = False
-
-      obj_cnt = obj
-      sub_cnt = sub
+      if add_video_token:
+         add_video_token = False
 
       # "Provide bounding box location of [{sub}:{rel}:{obj}] in frame {frame_idx} of the provided video" # {} to be replaced by actual value
-      convQ["value"] = convQ["value"].replace("{sub}", f"{vid_objects_by_id[sub]['category']}-{sub_cnt}")
+      convQ["value"] = convQ["value"].replace("{sub}", f"{vid_objects_by_id[sub]['category']}-{sub}")
       convQ["value"] = convQ["value"].replace("{rel}", rel)
-      convQ["value"] = convQ["value"].replace("{obj}", f"{vid_objects_by_id[obj]['category']}-{obj_cnt}")
+      convQ["value"] = convQ["value"].replace("{obj}", f"{vid_objects_by_id[obj]['category']}-{obj}")
       convQ["value"] = convQ["value"].replace("{frame_idx}", str(frame_indices.index(frame_idx)))
 
-
-      AnswerString_rel_bb = f"""The bounding box location is """
-      AnswerString_rel_bb += f"""{vid_objects_by_id[sub]['category']}-{sub_cnt}-{subj_obj_bb[rel_idx][0]}:{rel}:"""
-      AnswerString_rel_bb += f"""{vid_objects_by_id[obj]['category']}-{obj_cnt}-{subj_obj_bb[rel_idx][1]}"""
+      AnswerString_rel_bb = f"""Frame {frame_list_idx}, """
+      AnswerString_rel_bb += f"""{vid_objects_by_id[sub]['category']}-{sub}-{sub_bb}:{rel}:"""
+      AnswerString_rel_bb += f"""{vid_objects_by_id[obj]['category']}-{obj}-{obj_bb}"""
 
       # AnswerString_rel_bb = f"""The bounding box locations of"""
       # AnswerString_rel_bb += f"""[{vid_objects_by_id[sub]['category']}:{rel}:{vid_objects_by_id[obj]['category']}]"""
@@ -457,12 +462,14 @@ def addObjectsRelations_bb_instructions(video_path,vid_data,total_frames, subjob
       PromptAnswer["conversations"].append(convQ)
       PromptAnswer["conversations"].append(convA)
 
-      # if len(PromptAnswer["conversations"])>4:
-      #    break
+      if len(PromptAnswer["conversations"])>6:
+         break
     
-      PromptAnswer["frame_indices"] =  frame_indices
-      PromptAnswer["total_frames"] = total_frames
-      obj_rel_bb_prompts.append(PromptAnswer)
+    PromptAnswer["frame_indices"] =  frame_indices
+    PromptAnswer["total_frames"] = total_frames
+
+    if len(PromptAnswer["conversations"])>=2:
+       obj_rel_bb_prompts.append(PromptAnswer)
 
 
   return obj_rel_bb_prompts
@@ -470,6 +477,7 @@ def addObjectsRelations_bb_instructions(video_path,vid_data,total_frames, subjob
 
 def getObjectsRelations(vid_rels, vid_data, norm_frames=True, add_frames=True, uniform_sampling_idx=8):
     AnswerString = ""
+    AnswerString_with_bb = ""
     SubObjRel = []
     frame_indices = []
     # mask_size = None
@@ -505,6 +513,10 @@ def getObjectsRelations(vid_rels, vid_data, norm_frames=True, add_frames=True, u
         rel = vid_r[2]
         frames = vid_r[3].copy()
         frame_start, frame_end = frames[0][0], frames[0][1]
+        if frame_start>total_frames:
+           continue
+        if frame_end>total_frames:
+           continue
 
         # if frame_start>=frame_idx and frame_idx<=frame_end: # FIXED CONDITION
         if frame_idx>=frame_start and frame_idx<=frame_end:
@@ -518,11 +530,14 @@ def getObjectsRelations(vid_rels, vid_data, norm_frames=True, add_frames=True, u
             frames_where_subjobj_rel_is_present[frame_idx]["annot_cnt"] +=1
 
 
+    # TODO V13 and later: instead of sorting and using top 8 frames, divide total frames in 8 batch, and cover all SGs 
+    
     frames_with_subjobj_rel_cnt = [(frames_where_subjobj_rel_is_present[f_idx]["annot_cnt"], f_idx) for f_idx in frames_where_subjobj_rel_is_present]
     frames_with_subjobj_rel_cnt = sorted(frames_with_subjobj_rel_cnt,reverse=True) # get frames with highest rels annotation first
 
 
     AnswerString += "{"
+    AnswerString_with_bb += "{"
 
     for f_obj_idx, f_obj_cnt in enumerate(frames_with_subjobj_rel_cnt):
       cnt_, f_idx = f_obj_cnt
@@ -539,6 +554,9 @@ def getObjectsRelations(vid_rels, vid_data, norm_frames=True, add_frames=True, u
 
       AnswerString += f"'Frame {f_obj_idx}':"
       AnswerString +="'"  # start the list of relations string by "'"
+
+      AnswerString_with_bb += f"'Frame {f_obj_idx}':"
+      AnswerString_with_bb += "'" 
 
       frame_indices.append(f_idx)
 
@@ -569,17 +587,18 @@ def getObjectsRelations(vid_rels, vid_data, norm_frames=True, add_frames=True, u
         # obj_counter = update_obj_cnt(vid_objects_by_id[obj]['category'],obj_counter)
         # cnt_of_sub = obj_counter[vid_objects_by_id[sub]['category']]
         # cnt_of_obj = obj_counter[vid_objects_by_id[obj]['category']]
-        cnt_of_sub = obj
-        cnt_of_obj = sub
         
-        subj_obj_rel_entity = f"{sub}{cnt_of_sub}-{rel}-{obj}{cnt_of_obj}"
+        subj_obj_rel_entity = f"{sub}{sub}-{rel}-{obj}{obj}"
         if subj_obj_rel_entity not in rel_added:
           rel_added.append(subj_obj_rel_entity)
-          AnswerString += f"[{vid_objects_by_id[sub]['category']}-{cnt_of_sub}:{rel}:{vid_objects_by_id[obj]['category']}-{cnt_of_obj}]"
+          AnswerString += f"[{vid_objects_by_id[sub]['category']}-{sub}:{rel}:{vid_objects_by_id[obj]['category']}-{obj}]"
+          AnswerString_with_bb += f"[{vid_objects_by_id[sub]['category']}-{sub}-{sub_bb}:{rel}:{vid_objects_by_id[obj]['category']}-{obj}-{obj_bb}]"
         if idx!=len(subj_obj_rel)-1:
           AnswerString +=";"
+          AnswerString_with_bb += ";"
         else:
           AnswerString +="'"  # finish the list of triplets string by "'"
+          AnswerString_with_bb += "'"
 
       
       if f_obj_idx>6:
@@ -589,11 +608,13 @@ def getObjectsRelations(vid_rels, vid_data, norm_frames=True, add_frames=True, u
       
       if f_obj_idx!=len(frames_with_subjobj_rel_cnt)-1:
         AnswerString +=","
+        AnswerString_with_bb +=","
 
     
     AnswerString +="}"
+    AnswerString_with_bb +="}"
 
-    return AnswerString, frame_indices, frames_where_subjobj_rel_is_present
+    return AnswerString,AnswerString_with_bb, frame_indices, frames_where_subjobj_rel_is_present
 
 def getConvBlock(value,conv_type="human", media_type="<image>", add_media_token=False):
    assert conv_type=="human" or conv_type=="gpt"
@@ -635,6 +656,7 @@ def prepare_vid_sg_threaded(chunk_vid_data_keys,data, norm_bb=True, dataset="vid
       vid_objects = vid_data["objects"] # {'object_id': 2, 'category': 'countertop', 'is_thing': True, 'status': []},
 
 
+      # SG without grounding
       PromptAnswer = getPromptTemplate(media_path=video_path, media_type="video")
 
       # convQ = getConvBlock(value=getRandomPrompt(key='identify_subject_objects', static=True), 
@@ -650,7 +672,7 @@ def prepare_vid_sg_threaded(chunk_vid_data_keys,data, norm_bb=True, dataset="vid
       convQ = getConvBlock(value=getRandomPrompt(key='SGG', static=False), 
                           conv_type="human", media_type="<video>", 
                           add_media_token=True)
-      AnswerStringRels, frame_indices_rel, frames_where_subjobj_rel_is_present = getObjectsRelations(vid_data["relations"], vid_data, uniform_sampling_idx=uniform_sampling_idx, add_frames=False)
+      AnswerStringRels,AnswerString_with_bb, frame_indices_rel, frames_where_subjobj_rel_is_present = getObjectsRelations(vid_data["relations"], vid_data, uniform_sampling_idx=uniform_sampling_idx, add_frames=False)
       convA = getConvBlock(value=AnswerStringRels, 
                           conv_type="gpt", media_type="<video>", 
                           add_media_token=False)
@@ -674,23 +696,47 @@ def prepare_vid_sg_threaded(chunk_vid_data_keys,data, norm_bb=True, dataset="vid
           video_gpt_promptanswers_val.append(PromptAnswer)
           annot_cnt["val"] +=1
 
+
+      # # SG with grounding
+      # PromptAnswer = getPromptTemplate(media_path=video_path, media_type="video")
+      # convQ = getConvBlock(value=getRandomPrompt(key='SGG_with_bb', static=False), 
+      #                     conv_type="human", media_type="<video>", 
+      #                     add_media_token=True)
+      # convA = getConvBlock(value=AnswerString_with_bb, 
+      #                     conv_type="gpt", media_type="<video>", 
+      #                     add_media_token=False)
+      # PromptAnswer["conversations"].append(convQ)
+      # PromptAnswer["conversations"].append(convA)
+      # PromptAnswer["frame_indices"] =  all_frame_indices
+      # PromptAnswer["total_frames"] = total_frames
+
+      # with lock:
+      #   if vid_id in train_ids:
+      #     PromptAnswer["id"] = annot_cnt["train"]
+      #     video_gpt_promptanswers.append(PromptAnswer)
+      #     annot_cnt["train"] +=1
+      #   else:
+      #     PromptAnswer["id"] = annot_cnt["val"]
+      #     video_gpt_promptanswers_val.append(PromptAnswer)
+      #     annot_cnt["val"] +=1
       
+
+      # grounding sg triplets
       obj_rel_bb_prompts = addObjectsRelations_bb_instructions(video_path=video_path,
                                                                vid_data=vid_data,
                                                                total_frames=total_frames,
                                                                subjobj_rel_frames_data=frames_where_subjobj_rel_is_present,
                                                                frame_indices=frame_indices_rel)
-      
       with lock:
         for obj_rel_bb_prmpt in obj_rel_bb_prompts:
           if vid_id in train_ids:
-            obj_rel_bb_prmpt["id"] = video_bb_annot_cnt["train"]
+            obj_rel_bb_prmpt["id"] = annot_cnt["train"] # video_bb_annot_cnt["train"]
             video_gpt_bb_promptanswers.append(obj_rel_bb_prmpt)
-            video_bb_annot_cnt["train"] +=1
+            annot_cnt["train"] +=1
           else:
-            obj_rel_bb_prmpt["id"] = video_bb_annot_cnt["val"]
+            obj_rel_bb_prmpt["id"] = annot_cnt["val"] # video_bb_annot_cnt["val"]
             video_gpt_bb_promptanswers_val.append(obj_rel_bb_prmpt)
-            video_bb_annot_cnt["val"] +=1
+            annot_cnt["val"] +=1
          
       with lock:
         pbar.n +=1
@@ -810,17 +856,22 @@ if __name__=="__main__":
     print("len of chunked list: ", len(chunked_list))
 
 
-    OUTPUT_JSON_DIR = "/lustre/fs1/home/jbhol/dso/gits/OpenPVSG/data/video_llava_annotations_v13/"
+    OUTPUT_JSON_DIR = "/lustre/fs1/home/jbhol/dso/gits/OpenPVSG/data/video_llava_annotations_v13_5/"
     JSON_llava_image_tune_validate = f"{OUTPUT_JSON_DIR}/llava_image_tune_validate.json"
     JSON_llava_image_tune = f"{OUTPUT_JSON_DIR}/llava_image_tune_.json"
     JSON_videochatgpt_tune = f"{OUTPUT_JSON_DIR}/videochatgpt_tune_.json"
     JSON_videochatgpt_tune_validate = f"{OUTPUT_JSON_DIR}/videochatgpt_tune_validate.json"
+    # JSON_videochatgpt_tune_with_bb = f"{OUTPUT_JSON_DIR}/videochatgpt_tune_with_bb.json"
+    # JSON_videochatgpt_tune_with_bb_validate = f"{OUTPUT_JSON_DIR}/videochatgpt_tune_validate.json"
     JSON_videochatgpt_bb_tune = f"{OUTPUT_JSON_DIR}/videochatgpt_tune_bb.json"
     JSON_videochatgpt_bb_tune_validate = f"{OUTPUT_JSON_DIR}/videochatgpt_tune_bb_validate.json"
     os.makedirs(OUTPUT_JSON_DIR, exist_ok=True)
 
     video_gpt_promptanswers = []
     video_gpt_promptanswers_val = []
+
+    # video_gpt_promptanswers_with_bb = []
+    # video_gpt_promptanswers_with_bb_val = []
 
     video_gpt_bb_promptanswers=  []
     video_gpt_bb_promptanswers_val =  []
